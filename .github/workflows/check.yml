@@ -184,3 +184,8 @@ jobs:
           git add data/icourse.db.gz.enc
           git commit -m "chore: update encrypted database"
           git push --force "https://${{ github.actor }}:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git" data
+      - name: Upload Transcripts
+        uses: actions/upload-artifact@v4
+        with:
+          name: course-transcripts
+          path: transcripts/
