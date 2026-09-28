@@ -199,16 +199,24 @@ jobs:
           conn = sqlite3.connect(db_file)
           cur = conn.cursor()
 
+          # 1. 动态检测 courses 表的标题字段
+          cur.execute("PRAGMA table_info(courses)")
+          course_cols = [r[1] for r in cur.fetchall()]
+          c_title_col = next((c for c in ["title", "course_title", "name", "course_name"] if c in course_cols), None)
+
+          # 2. 动态检测 lectures 表中的转写字段
           cur.execute("PRAGMA table_info(lectures)")
-          cols = [r[1] for r in cur.fetchall()]
-          text_col = next((c for c in ["transcript", "asr_text", "text", "content"] if c in cols), None)
+          lec_cols = [r[1] for r in cur.fetchall()]
+          text_col = next((c for c in ["transcript", "asr_text", "text", "content"] if c in lec_cols), None)
 
           if not text_col:
-              print(f"Transcript column not found in {cols}")
+              print(f"Transcript column not found in lectures table. Available columns: {lec_cols}")
               exit(0)
 
+          # 拼接安全查询
+          course_select = f"c.{c_title_col}" if c_title_col else "'Course'"
           query = f"""
-              SELECT COALESCE(c.name, 'Course'), l.date, l.sub_title, l.{text_col}
+              SELECT COALESCE({course_select}, 'Course'), l.date, l.sub_title, l.{text_col}
               FROM lectures l
               LEFT JOIN courses c ON l.course_id = c.course_id
               WHERE l.{text_col} IS NOT NULL AND trim(l.{text_col}) != ''
@@ -218,20 +226,11 @@ jobs:
 
           for course_name, date_str, title, text in rows:
               safe_name = re.sub(r'[\\/*?:"<>|]', '_', f"{course_name}_{date_str or ''}_{title or 'lesson'}.txt")
-              (out_dir / safe_name).write_text(text, encoding="utf-8")
+              (out_dir / safe_name).write_text(str(text), encoding="utf-8")
 
           print(f"Exported {len(rows)} transcripts successfully.")
           conn.close()
           EOF
-
-      - name: Upload transcripts artifact
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: transcripts-${{ github.run_id }}
-          path: outputs/transcripts/
-          retention-days: 30
-          if-no-files-found: ignore
 # ==================== 插入结束 ====================
 
 # -------------------- 原有代码继续 --------------------
