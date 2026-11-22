@@ -181,7 +181,64 @@ jobs:
           eval "$(python scripts/provider_env.py)"
           unset SECRETS_CONTEXT
           python -u main.py
+      - name: Export raw transcripts from database
+        if: always()
+        run: |
+          python3 - << 'EOF'
+          import os, re, sqlite3
 
+          db_path = "data/icourse.db"
+          out_dir = os.path.join(os.environ.get("GITHUB_WORKSPACE", "."), "exported_transcripts")
+          os.makedirs(out_dir, exist_ok=True)
+
+          if not os.path.exists(db_path):
+              print("Database not found, skipping transcript export.")
+              raise SystemExit(0)
+
+          conn = sqlite3.connect(db_path)
+          cur = conn.cursor()
+
+          tables = [r[0] for r in cur.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()]
+          exported = 0
+
+          for table in tables:
+              cols = [r[1] for r in cur.execute(f"PRAGMA table_info('{table}')").fetchall()]
+              transcript_cols = [c for c in cols if "transcript" in c.lower() or "asr" in c.lower()]
+              if not transcript_cols:
+                  continue
+
+              # 尝试找用于命名的辅助字段（如课程名、标题、日期、ID）
+              id_col = next((c for c in cols if c.lower() in ("sub_id", "id", "lecture_id", "course_id")), cols[0])
+              title_col = next((c for c in cols if any(k in c.lower() for k in ("title", "name", "date"))), None)
+
+              for t_col in transcript_cols:
+                  select_cols = [id_col, t_col] + ([title_col] if title_col and title_col != id_col else [])
+                  query = f"SELECT {', '.join(select_cols)} FROM '{table}' WHERE {t_col} IS NOT NULL AND TRIM({t_col}) != ''"
+                  for row in cur.execute(query).fetchall():
+                      rec_id = str(row[0])
+                      text = str(row[1]).strip()
+                      title = str(row[2]).strip() if len(row) > 2 and row[2] else ""
+
+                      raw_name = f"{rec_id}_{title}" if title else f"{table}_{rec_id}"
+                      safe_name = re.sub(r'[\\/:*?"<>|\r\n]+', "_", raw_name)[:100]
+                      file_path = os.path.join(out_dir, f"{safe_name}.txt")
+
+                      with open(file_path, "w", encoding="utf-8") as f:
+                          f.write(text)
+                      exported += 1
+
+          conn.close()
+          print(f"Successfully exported {exported} transcript file(s) to {out_dir}.")
+          EOF
+
+      - name: Upload raw transcripts artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: course-raw-transcripts
+          path: ${{ github.workspace }}/exported_transcripts/
+          if-no-files-found: ignore
+          retention-days: 30
       - name: Deploy database to data branch
         if: always()
         env:
