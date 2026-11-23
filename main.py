@@ -12,9 +12,10 @@ AudioDownloader.  This file does only orchestration:
 
 Anything more interesting belongs in one of ``src/*`` modules.
 """
-
+import os
 import time
 import traceback
+
 
 from src.runtime import config
 from src.data.database import Database
@@ -76,6 +77,8 @@ def _enumerate_lectures(client: ICourseClient, db: Database,
     process this run.  Done up-front so the prefetch loop can see across
     course boundaries when picking the "next" lecture."""
     out: list[tuple[str, str, dict]] = []
+    target_sub_ids_raw = os.environ.get("TARGET_SUB_IDS", "").strip()
+    target_sub_ids = {s.strip() for s in target_sub_ids_raw.split(",") if s.strip()}
     for course_id in config.COURSE_IDS:
         try:
             _check_session(client)
@@ -129,6 +132,11 @@ def _enumerate_lectures(client: ICourseClient, db: Database,
                 for u in unprocessed if u["sub_id"] not in new_ids
             ]
             new_lectures.extend(retry_only)
+            if target_sub_ids:
+                new_lectures = [
+                    lec for lec in new_lectures
+                    if str(lec["sub_id"]) in target_sub_ids
+                ]
             reporter.course_new_count(len(new_lectures))
             if not new_lectures:
                 continue
